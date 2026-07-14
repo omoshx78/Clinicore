@@ -13,7 +13,17 @@ import catalogRoutes from "./routes/catalog.routes";
 
 const app = express();
 
-app.use(cors({ origin: (process.env.CORS_ORIGIN || "*").split(",") }));
+const corsOrigin = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",").map((o) => o.trim().replace(/\/+$/, ""))
+  : "*";
+
+console.log("CORS allowed origins:", corsOrigin);
+
+const corsOptions: cors.CorsOptions = { origin: corsOrigin };
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions)); // explicit preflight handling
+app.use(express.json());
 app.use(express.json());
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
