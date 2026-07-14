@@ -106,7 +106,7 @@ router.post("/:id/consultation", requireAuth, requireRole("DOCTOR"), async (req:
     }
 
     const nextDept = nextAfterConsultation(labTestIds.length > 0, prescriptions.length > 0);
-    await tx.encounter.update({ where: { id: encounterId }, data: { status: nextDept } });
+    await tx.encounter.update({ where: { id: encounterId }, data: { status: nextDept as any } });
     await tx.queueEntry.update({ where: { id: entry.id }, data: { status: "COMPLETED", completedAt: new Date() } });
     await enqueue(tx, encounterId, nextDept);
     return { nextDepartment: nextDept };
@@ -147,7 +147,7 @@ router.post("/:id/lab-results", requireAuth, requireRole("LAB_TECH"), async (req
     }
 
     const nextDept = nextAfterLab(prescriptions > 0);
-    await tx.encounter.update({ where: { id: encounterId }, data: { status: nextDept } });
+    await tx.encounter.update({ where: { id: encounterId }, data: { status: nextDept as any } });
     await tx.queueEntry.update({ where: { id: entry.id }, data: { status: "COMPLETED", completedAt: new Date() } });
     await enqueue(tx, encounterId, nextDept);
   });
