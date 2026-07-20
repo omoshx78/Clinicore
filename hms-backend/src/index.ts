@@ -17,14 +17,33 @@ const corsOrigin = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(",").map((o) => o.trim().replace(/\/+$/, ""))
   : "*";
 
-console.log("CORS allowed origins:", corsOrigin);
+// Define origins dynamically but strictly
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",").map((o) => o.trim().replace(/\/+$/, ""))
+  : ["*"];
 
-const corsOptions: cors.CorsOptions = { origin: corsOrigin };
+console.log("CORS allowed origins:", allowedOrigins);
 
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps, curl, or server-to-server)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      return callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+};
+
+// Apply to options/preflight first, then global middleware
+app.options("*", cors(corsOptions));
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions)); // explicit preflight handling
 app.use(express.json());
-
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.use("/auth", authRoutes);
