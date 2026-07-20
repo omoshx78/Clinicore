@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Search, Users, Clock } from "lucide-react";
 import { api, ApiError } from "../api/client";
 import { Card, SectionHeader, Badge, ErrorBanner, money } from "../components/ui";
@@ -11,6 +11,8 @@ const STATUS_COLORS: Record<string, string> = {
   LABORATORY: "bg-purple-100 text-purple-800 border-purple-300",
   PHARMACY: "bg-sky-100 text-sky-800 border-sky-300",
   CASHIER: "bg-orange-100 text-orange-800 border-orange-300",
+  AWAITING_ADMISSION: "bg-indigo-100 text-indigo-800 border-indigo-300",
+  AWAITING_THEATRE: "bg-fuchsia-100 text-fuchsia-800 border-fuchsia-300",
   ADMITTED: "bg-indigo-100 text-indigo-800 border-indigo-300",
   DISCHARGED: "bg-emerald-100 text-emerald-800 border-emerald-300",
 };
@@ -20,14 +22,24 @@ export default function Patients() {
   const [results, setResults] = useState<Patient[]>([]);
   const [selected, setSelected] = useState<Patient | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const runSearch = async () => {
-    try {
-      setResults(await api.get(`/patients?search=${encodeURIComponent(search)}`));
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Search failed");
-    }
-  };
+  useEffect(() => {
+    setLoading(true);
+    const handle = setTimeout(async () => {
+      try {
+        // Empty search still hits the API — the backend returns the most
+        // recently registered patients when no search term is given, so
+        // the list below is never empty by default.
+        setResults(await api.get(`/patients?search=${encodeURIComponent(search.trim())}`));
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : "Could not load patients");
+      } finally {
+        setLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [search]);
 
   const select = async (p: Patient) => {
     try {
@@ -43,28 +55,27 @@ export default function Patients() {
       <ErrorBanner message={error} />
       <div className="grid grid-cols-3 gap-5">
         <Card className="col-span-1">
-          <div className="flex gap-1.5 mb-3">
-            <div className="relative flex-1">
-              <Search size={14} className="absolute left-2.5 top-2.5 text-slate-400" />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && runSearch()}
-                placeholder="Search by name, MRN, or phone"
-                className="w-full border border-slate-300 rounded-lg pl-8 pr-3 py-2 text-sm"
-              />
-            </div>
-            <button onClick={runSearch} className="text-xs bg-slate-800 text-white rounded-lg px-3 hover:bg-slate-900">Go</button>
+          <div className="relative mb-3">
+            <Search size={14} className="absolute left-2.5 top-2.5 text-slate-400" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by name, MRN, phone, or ID number"
+              className="w-full border border-slate-300 rounded-lg pl-8 pr-3 py-2 text-sm"
+            />
           </div>
-          {results.length === 0 ? (
-            <p className="text-sm text-slate-400">Search to find a patient.</p>
+          <p className="text-xs text-slate-400 mb-2">{search.trim() ? "Search results" : "Recent patients"}</p>
+          {loading ? (
+            <p className="text-sm text-slate-400">Loading...</p>
+          ) : results.length === 0 ? (
+            <p className="text-sm text-slate-400">No patients found.</p>
           ) : (
             <ul className="space-y-2 max-h-[520px] overflow-auto">
               {results.map((p) => (
                 <li key={p.id}>
                   <button onClick={() => select(p)} className={`w-full text-left px-3 py-2 rounded-lg border text-sm ${selected?.id === p.id ? "border-teal-600 bg-teal-50" : "border-slate-200 hover:bg-slate-50"}`}>
                     <p className="font-medium">{p.firstName} {p.lastName}</p>
-                    <p className="text-xs text-slate-500">{p.mrn}</p>
+                    <p className="text-xs text-slate-500">{p.mrn} · {p.phone || "no phone"}</p>
                   </button>
                 </li>
               ))}
@@ -92,7 +103,19 @@ export default function Patients() {
                       <Badge className={STATUS_COLORS[enc.status] || "bg-slate-100 text-slate-700 border-slate-300"}>{enc.status}</Badge>
                     </div>
                     {enc.chiefComplaint && <p className="text-xs text-slate-500 mb-1">Complaint: {enc.chiefComplaint}</p>}
-                    {enc.consultations?.[0]?.diagnosis && <p className="text-xs text-slate-500 mb-1">Diagnosis: {enc.consultations[0].diagnosis}</p>}
+                    {enc.triage?.notes && <p className="text-xs text-slate-500 mb-1"><span className="font-medium">Triage:</span> {enc.triage.notes}</p>}
+                    {(enc.consultations || []).map((c: any) => (
+                      (c.diagnosis || c.notes) && (
+                        <p key={c.id} className="text-xs text-slate-500 mb-1"><span className="font-medium">Doctor:</span> {c.diagnosis ? `${c.diagnosis} — ` : ""}{c.notes || ""}</p>
+                      )
+                    ))}
+                    {(enc.notes || []).length > 0 && (
+                      <div className="mt-1.5 mb-1 space-y-1">
+                        {enc.notes.map((n: any) => (
+                          <p key={n.id} className="text-xs bg-slate-50 rounded px-2 py-1"><span className="font-medium text-slate-600">{n.department}:</span> {n.note}</p>
+                        ))}
+                      </div>
+                    )}
                     {enc.billingItems?.length > 0 && (
                       <div className="mt-2">
                         <p className="text-xs font-medium text-slate-600 mb-1 flex items-center gap-1"><Clock size={11} /> Billing</p>

@@ -23,6 +23,48 @@ async function requireClaimedEntry(encounterId: string, department: Department, 
   return entry;
 }
 
+// Maps a staff member's role to a human-readable department label, used to
+// tag notes so a doctor reading the patient's record can see at a glance
+// who left each note.
+const ROLE_DEPARTMENT_LABEL: Record<string, string> = {
+  NURSE: "Triage",
+  DOCTOR: "Consultation",
+  LAB_TECH: "Laboratory",
+  PHARMACIST: "Pharmacy",
+  CASHIER: "Cashier",
+  WARD_NURSE: "Ward",
+  RECEPTIONIST: "Reception",
+  ADMIN: "Admin",
+};
+
+const noteSchema = z.object({ note: z.string().min(1) });
+
+/**
+ * POST /encounters/:id/notes
+ * A note any staff member can leave on a patient's visit — tagged with
+ * their department automatically. These show up on the patient's
+ * permanent profile (visible to any doctor) and, for triage/consultation
+ * notes specifically, are also surfaced directly in the consultation
+ * screens for continuity of care.
+ */
+router.post("/:id/notes", requireAuth, async (req: AuthedRequest, res) => {
+  const parsed = noteSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Note text is required" });
+
+  const encounter = await prisma.encounter.findUnique({ where: { id: req.params.id } });
+  if (!encounter) return res.status(404).json({ error: "Encounter not found" });
+
+  const note = await prisma.encounterNote.create({
+    data: {
+      encounterId: req.params.id,
+      department: ROLE_DEPARTMENT_LABEL[req.user!.role] || req.user!.role,
+      authorId: req.user!.id,
+      note: parsed.data.note,
+    },
+  });
+  res.status(201).json(note);
+});
+
 // ---------------- Triage ----------------
 
 const triageSchema = z.object({
@@ -67,13 +109,19 @@ const consultationSchema = z.object({
   notes: z.string().optional(),
   labTestIds: z.array(z.string()).default([]), // keys from LAB_TEST_CATALOG
   prescriptions: z.array(z.object({ itemId: z.string(), quantity: z.number().int().min(1) })).default([]),
+  // Optional direct routing — used when the doctor doesn't need lab/pharmacy
+  // first and wants to send the patient straight to theatre or discharge
+  // them on this first visit. When set, labTestIds/prescriptions are ignored.
+  decision: z.enum(["THEATRE", "DISCHARGE"]).optional(),
 });
 
 router.post("/:id/consultation", requireAuth, requireRole("DOCTOR"), async (req: AuthedRequest, res) => {
   const encounterId = req.params.id;
   const parsed = consultationSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
-  const { diagnosis, notes, labTestIds, prescriptions } = parsed.data;
+  const { diagnosis, notes, decision } = parsed.data;
+  const labTestIds = decision ? [] : parsed.data.labTestIds;
+  const prescriptions = decision ? [] : parsed.data.prescriptions;
 
   const entry = await requireClaimedEntry(encounterId, "CONSULTATION", req.user!.id);
   if (!entry) {
@@ -105,14 +153,15 @@ router.post("/:id/consultation", requireAuth, requireRole("DOCTOR"), async (req:
       await tx.prescription.create({ data: { encounterId, itemId: rx.itemId, quantity: rx.quantity } });
     }
 
-    const nextDept = nextAfterConsultation(labTestIds.length > 0, prescriptions.length > 0);
-    await tx.encounter.update({ where: { id: encounterId }, data: { status: nextDept as any } });
+    const nextDept: Department = decision === "THEATRE" ? "THEATRE" : decision === "DISCHARGE" ? "CASHIER" : nextAfterConsultation(labTestIds.length > 0, prescriptions.length > 0);
+    const nextStatus = decision === "THEATRE" ? "AWAITING_THEATRE" : (nextDept as any);
+    await tx.encounter.update({ where: { id: encounterId }, data: { status: nextStatus } });
     await tx.queueEntry.update({ where: { id: entry.id }, data: { status: "COMPLETED", completedAt: new Date() } });
     await enqueue(tx, encounterId, nextDept);
     return { nextDepartment: nextDept };
   });
 
-  await logAction({ userId: req.user!.id, action: "consultation.recorded", entityType: "Encounter", entityId: encounterId });
+  await logAction({ userId: req.user!.id, action: "consultation.recorded", entityType: "Encounter", entityId: encounterId, details: { decision } });
   res.status(201).json(result);
 });
 
@@ -131,7 +180,7 @@ router.post("/:id/lab-results", requireAuth, requireRole("LAB_TECH"), async (req
   if (!entry) return res.status(403).json({ error: "You must claim this patient from the laboratory queue first" });
 
   const orders = await prisma.labOrder.findMany({ where: { encounterId, status: "PENDING" } });
-  const prescriptions = await prisma.prescription.count({ where: { encounterId } });
+  const triage = await prisma.triageRecord.findUnique({ where: { encounterId } });
 
   await prisma.$transaction(async (tx) => {
     for (const r of parsed.data.results) {
@@ -146,14 +195,83 @@ router.post("/:id/lab-results", requireAuth, requireRole("LAB_TECH"), async (req
       });
     }
 
-    const nextDept = nextAfterLab(prescriptions > 0);
+    // Always back to the doctor — results need a clinician's eyes before
+    // anything else happens (pharmacy, ward, or discharge).
+    const nextDept = nextAfterLab();
     await tx.encounter.update({ where: { id: encounterId }, data: { status: nextDept as any } });
     await tx.queueEntry.update({ where: { id: entry.id }, data: { status: "COMPLETED", completedAt: new Date() } });
-    await enqueue(tx, encounterId, nextDept);
+    await enqueue(tx, encounterId, nextDept, triage?.priority);
   });
 
   await logAction({ userId: req.user!.id, action: "lab.results_entered", entityType: "Encounter", entityId: encounterId });
   res.json({ ok: true });
+});
+
+// ---------------- Consultation review (after lab results) ----------------
+
+const reviewSchema = z.object({
+  decision: z.enum(["PHARMACY", "WARD", "THEATRE", "DISCHARGE"]),
+  notes: z.string().optional(),
+  prescriptions: z.array(z.object({ itemId: z.string(), quantity: z.number().int().min(1) })).default([]),
+});
+
+/**
+ * A doctor reviewing lab/equipment results has four outcomes: send to
+ * pharmacy for medication, refer to a ward for admission, refer to
+ * theatre for a procedure, or dismiss the patient (no further treatment)
+ * straight to the cashier — in every case, whatever was already charged
+ * (consultation + lab fees) still stands.
+ */
+router.post("/:id/consultation-review", requireAuth, requireRole("DOCTOR"), async (req: AuthedRequest, res) => {
+  const encounterId = req.params.id;
+  const parsed = reviewSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
+  const { decision, notes, prescriptions } = parsed.data;
+
+  const entry = await requireClaimedEntry(encounterId, "CONSULTATION", req.user!.id);
+  if (!entry) return res.status(403).json({ error: "You must claim this patient from the consultation queue first" });
+
+  if (decision === "PHARMACY") {
+    if (prescriptions.length === 0) {
+      return res.status(400).json({ error: "Add at least one medicine to send this patient to pharmacy" });
+    }
+    const items = await prisma.inventoryItem.findMany({ where: { id: { in: prescriptions.map((p) => p.itemId) } } });
+    if (items.length !== prescriptions.length) {
+      return res.status(400).json({ error: "One or more prescribed items don't exist in inventory" });
+    }
+  }
+
+  const nextDept: Department =
+    decision === "PHARMACY" ? "PHARMACY" : decision === "WARD" ? "WARD" : decision === "THEATRE" ? "THEATRE" : "CASHIER";
+  const nextStatus =
+    decision === "WARD" ? "AWAITING_ADMISSION" : decision === "THEATRE" ? "AWAITING_THEATRE" : (nextDept as any);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.consultation.create({
+      data: {
+        encounterId,
+        doctorId: req.user!.id,
+        notes: `Lab review — decision: ${decision}.${notes ? " " + notes : ""}`,
+      },
+    });
+    if (decision === "PHARMACY") {
+      for (const rx of prescriptions) {
+        await tx.prescription.create({ data: { encounterId, itemId: rx.itemId, quantity: rx.quantity } });
+      }
+    }
+    await tx.encounter.update({ where: { id: encounterId }, data: { status: nextStatus } });
+    await tx.queueEntry.update({ where: { id: entry.id }, data: { status: "COMPLETED", completedAt: new Date() } });
+    await enqueue(tx, encounterId, nextDept);
+  });
+
+  await logAction({
+    userId: req.user!.id,
+    action: "consultation.review_decided",
+    entityType: "Encounter",
+    entityId: encounterId,
+    details: { decision },
+  });
+  res.json({ ok: true, decision });
 });
 
 // ---------------- Pharmacy ----------------

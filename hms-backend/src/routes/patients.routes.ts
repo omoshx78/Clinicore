@@ -122,10 +122,11 @@ router.get("/", requireAuth, async (req: AuthedRequest, res) => {
             { firstName: { contains: search, mode: "insensitive" } },
             { lastName: { contains: search, mode: "insensitive" } },
             { phone: { contains: search } },
+            { nationalId: { contains: search, mode: "insensitive" } },
           ],
         }
       : undefined,
-    orderBy: { createdAt: "desc" },
+    orderBy: search ? [{ firstName: "asc" }, { lastName: "asc" }] : { createdAt: "desc" },
     take: 25,
   });
   res.json(patients);
@@ -146,6 +147,7 @@ router.get("/:id", requireAuth, async (req, res) => {
           billingItems: true,
           payment: true,
           admission: { include: { bed: { include: { ward: true } } } },
+          notes: { orderBy: { createdAt: "asc" } },
         },
       },
     },

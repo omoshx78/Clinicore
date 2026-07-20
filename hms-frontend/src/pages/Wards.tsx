@@ -1,15 +1,15 @@
 import { useState, useEffect, FormEvent } from "react";
-import { BedDouble, Plus } from "lucide-react";
+import { BedDouble, Plus, Inbox } from "lucide-react";
 import { api, ApiError } from "../api/client";
 import { Card, SectionHeader, Badge, ErrorBanner } from "../components/ui";
 import { Patient } from "../types";
+import { PatientPicker } from "../components/PatientPicker";
 
 export default function Wards() {
   const [wards, setWards] = useState<any[]>([]);
+  const [referrals, setReferrals] = useState<{ waiting: any[]; mine: any[] }>({ waiting: [], mine: [] });
   const [error, setError] = useState<string | null>(null);
 
-  const [patientSearch, setPatientSearch] = useState("");
-  const [patientResults, setPatientResults] = useState<Patient[]>([]);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [encounterId, setEncounterId] = useState("");
   const [bedId, setBedId] = useState("");
@@ -20,8 +20,9 @@ export default function Wards() {
 
   const load = async () => {
     try {
-      const w = await api.get("/wards");
+      const [w, q] = await Promise.all([api.get("/wards"), api.get("/queue/WARD")]);
       setWards(w);
+      setReferrals(q);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load wards");
     }
@@ -30,14 +31,23 @@ export default function Wards() {
 
   const availableBeds = wards.flatMap((w) => w.beds.filter((b: any) => b.status === "AVAILABLE").map((b: any) => ({ ...b, wardName: w.name })));
 
-  const searchPatients = async () => {
-    if (!patientSearch) return;
-    setPatientResults(await api.get(`/patients?search=${encodeURIComponent(patientSearch)}`));
+  const claimReferral = async (id: string) => {
+    setError(null);
+    try {
+      await api.post(`/queue/${id}/claim`);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not claim this referral");
+    }
+  };
+
+  const pickReferral = (entry: any) => {
+    setSelectedPatient(entry.encounter.patient);
+    setEncounterId(entry.encounterId);
   };
 
   const pickPatient = async (p: Patient) => {
     setSelectedPatient(p);
-    setPatientResults([]);
     const full = await api.get(`/patients/${p.id}`);
     const active = (full.encounters || []).find((e: any) => e.status !== "DISCHARGED" && e.status !== "ADMITTED");
     setEncounterId(active ? active.id : "");
@@ -79,6 +89,40 @@ export default function Wards() {
       <SectionHeader title="Wards" subtitle="Bed occupancy, admissions and inpatient care" />
       <ErrorBanner message={error} />
 
+      {(referrals.waiting.length > 0 || referrals.mine.length > 0) && (
+        <Card className="mb-5">
+          <p className="font-medium text-sm mb-3 flex items-center gap-1.5"><Inbox size={15} /> Referrals from consultation</p>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-xs text-slate-500 mb-2">Awaiting claim ({referrals.waiting.length})</p>
+              {referrals.waiting.length === 0 ? <p className="text-xs text-slate-400">None right now.</p> : (
+                <ul className="space-y-1.5">
+                  {referrals.waiting.map((r: any) => (
+                    <li key={r.id} className="flex items-center justify-between border border-slate-200 rounded-lg px-3 py-1.5 text-sm">
+                      <span>{r.encounter.patient.firstName} {r.encounter.patient.lastName} ({r.encounter.patient.mrn})</span>
+                      <button onClick={() => claimReferral(r.id)} className="text-xs bg-teal-800 text-white rounded px-2 py-1 hover:bg-teal-900">Claim</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div>
+              <p className="text-xs text-slate-500 mb-2">Claimed by you ({referrals.mine.length})</p>
+              {referrals.mine.length === 0 ? <p className="text-xs text-slate-400">None right now.</p> : (
+                <ul className="space-y-1.5">
+                  {referrals.mine.map((r: any) => (
+                    <li key={r.id} className="flex items-center justify-between border border-teal-200 bg-teal-50 rounded-lg px-3 py-1.5 text-sm">
+                      <span>{r.encounter.patient.firstName} {r.encounter.patient.lastName} ({r.encounter.patient.mrn})</span>
+                      <button onClick={() => pickReferral(r)} className="text-xs text-teal-700 hover:underline">Admit this patient →</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </Card>
+      )}
+
       <div className="grid grid-cols-3 gap-5 mb-5">
         <Card>
           <p className="font-medium text-sm mb-3 flex items-center gap-1.5"><BedDouble size={15} /> Admit a patient</p>
@@ -90,21 +134,7 @@ export default function Wards() {
               </div>
             ) : (
               <div>
-                <div className="flex gap-1.5">
-                  <input value={patientSearch} onChange={(e) => setPatientSearch(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), searchPatients())} placeholder="Search patient..." className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm" />
-                  <button type="button" onClick={searchPatients} className="text-xs bg-slate-800 text-white rounded-lg px-3 hover:bg-slate-900">Search</button>
-                </div>
-                {patientResults.length > 0 && (
-                  <ul className="mt-1.5 space-y-1 max-h-32 overflow-auto">
-                    {patientResults.map((p) => (
-                      <li key={p.id}>
-                        <button type="button" onClick={() => pickPatient(p)} className="w-full text-left text-xs px-2 py-1.5 border border-slate-200 rounded hover:bg-slate-50">
-                          {p.firstName} {p.lastName} ({p.mrn})
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <PatientPicker onSelect={pickPatient} />
               </div>
             )}
             {selectedPatient && !encounterId && (
@@ -128,7 +158,7 @@ export default function Wards() {
           <div className="space-y-4 max-h-[520px] overflow-auto">
             {wards.map((w) => (
               <div key={w.id}>
-                <p className="text-xs font-medium text-slate-500 mb-1.5">{w.name} <span className="text-slate-400">({w.type})</span></p>
+                <p className="text-xs font-medium text-slate-500 mb-1.5">{w.name} <span className="text-slate-400">({w.type}) · KSh {Number(w.dailyRate).toLocaleString()}/night</span></p>
                 <div className="space-y-2">
                   {w.beds.map((b: any) => {
                     const admission = b.admissions?.[0];

@@ -17,6 +17,8 @@ import Reports from "./pages/Reports";
 import Theatre from "./pages/Theatre";
 import Wards from "./pages/Wards";
 import Inventory from "./pages/Inventory";
+import Staff from "./pages/Staff";
+import ChangePassword from "./pages/ChangePassword";
 
 function Guard({ roles, children }: { roles?: Role[]; children: ReactNode }) {
   const { user, loading } = useAuth();
@@ -130,6 +132,15 @@ export default function App() {
             </Guard>
           }
         />
+        <Route
+          path="/staff"
+          element={
+            <Guard roles={["ADMIN"]}>
+              <Staff />
+            </Guard>
+          }
+        />
+        <Route path="/change-password" element={<ChangePassword />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

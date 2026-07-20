@@ -62,4 +62,73 @@ router.get("/me", requireAuth, (req: AuthedRequest, res) => {
   res.json(req.user);
 });
 
+/** GET /auth/users — list all staff accounts (admin only) */
+router.get("/users", requireAuth, requireRole("ADMIN"), async (_req, res) => {
+  const users = await prisma.user.findMany({
+    select: { id: true, name: true, email: true, role: true, active: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+  });
+  res.json(users);
+});
+
+const updateUserSchema = z.object({
+  name: z.string().min(1).optional(),
+  role: z.enum(["ADMIN", "RECEPTIONIST", "NURSE", "DOCTOR", "LAB_TECH", "PHARMACIST", "CASHIER", "WARD_NURSE"]).optional(),
+  active: z.boolean().optional(),
+});
+
+/** PATCH /auth/users/:id — update a staff member's name/role/active status (admin only) */
+router.patch("/users/:id", requireAuth, requireRole("ADMIN"), async (req: AuthedRequest, res) => {
+  const parsed = updateUserSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
+  if (Object.keys(parsed.data).length === 0) return res.status(400).json({ error: "Nothing to update" });
+
+  if (parsed.data.active === false && req.params.id === req.user!.id) {
+    return res.status(400).json({ error: "You can't deactivate your own account" });
+  }
+  if (parsed.data.role && parsed.data.role !== "ADMIN" && req.params.id === req.user!.id) {
+    return res.status(400).json({ error: "You can't change your own role away from admin" });
+  }
+
+  const user = await prisma.user.update({
+    where: { id: req.params.id },
+    data: parsed.data,
+    select: { id: true, name: true, email: true, role: true, active: true },
+  });
+  res.json(user);
+});
+
+const resetPasswordSchema = z.object({ newPassword: z.string().min(8, "Password must be at least 8 characters") });
+
+/** POST /auth/users/:id/reset-password — admin sets a new password for any staff member (e.g. onboarding, forgotten password) */
+router.post("/users/:id/reset-password", requireAuth, requireRole("ADMIN"), async (req: AuthedRequest, res) => {
+  const parsed = resetPasswordSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
+
+  const passwordHash = await bcrypt.hash(parsed.data.newPassword, 12);
+  await prisma.user.update({ where: { id: req.params.id }, data: { passwordHash } });
+  res.json({ ok: true });
+});
+
+const changeOwnPasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8, "Password must be at least 8 characters"),
+});
+
+/** PATCH /auth/me/password — any logged-in user changes their own password, proving they know the current one */
+router.patch("/me/password", requireAuth, async (req: AuthedRequest, res) => {
+  const parsed = changeOwnPasswordSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
+
+  const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
+  if (!user) return res.status(404).json({ error: "User not found" });
+
+  const valid = await bcrypt.compare(parsed.data.currentPassword, user.passwordHash);
+  if (!valid) return res.status(401).json({ error: "Current password is incorrect" });
+
+  const passwordHash = await bcrypt.hash(parsed.data.newPassword, 12);
+  await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+  res.json({ ok: true });
+});
+
 export default router;

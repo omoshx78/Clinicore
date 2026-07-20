@@ -1,7 +1,7 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, Link } from "react-router-dom";
 import {
   LayoutDashboard, UserPlus, Activity, Stethoscope, FlaskConical, Pill,
-  Wallet, CalendarClock, Boxes, BedDouble, BarChart3, LogOut, Users,
+  Wallet, CalendarClock, Boxes, BedDouble, BarChart3, LogOut, Users, KeyRound, ShieldCheck,
 } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { Role } from "../types";
@@ -26,6 +26,7 @@ const NAV: NavItem[] = [
   { to: "/theatre", label: "Theatre & equipment", icon: CalendarClock, roles: ["DOCTOR", "NURSE", "WARD_NURSE", "ADMIN"] },
   { to: "/wards", label: "Wards", icon: BedDouble, roles: ["DOCTOR", "NURSE", "WARD_NURSE", "ADMIN"] },
   { to: "/inventory", label: "Inventory", icon: Boxes, roles: ["PHARMACIST", "ADMIN"] },
+  { to: "/staff", label: "Staff", icon: ShieldCheck, roles: ["ADMIN"] },
 ];
 
 export function Layout() {
@@ -61,6 +62,9 @@ export function Layout() {
         <div className="px-4 py-3 border-t border-teal-800 text-xs">
           <p className="text-teal-100 font-medium">{user?.name}</p>
           <p className="text-teal-400 mb-2">{user?.role}</p>
+          <Link to="/change-password" className="flex items-center gap-1.5 text-teal-300 hover:text-white mb-1.5">
+            <KeyRound size={13} /> Change password
+          </Link>
           <button onClick={logout} className="flex items-center gap-1.5 text-teal-300 hover:text-white">
             <LogOut size={13} /> Log out
           </button>

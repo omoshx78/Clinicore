@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { Department } from "@prisma/client";
 import { prisma } from "../db";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requireRole } from "../middleware/roles";
@@ -114,13 +115,24 @@ router.post("/bookings/:id/claim", requireAuth, requireRole("DOCTOR", "NURSE"), 
   res.json(updated);
 });
 
+const completeSchema = z.object({
+  decision: z.enum(["WARD", "CASHIER"]),
+  notes: z.string().optional(),
+});
+
 /**
  * POST /theatre/bookings/:id/complete
- * Posts the itemized charges to the patient's bill and closes out the
- * queue entry. Only the staff member who claimed it (or an admin) can
- * complete it.
+ * Posts the itemized charges to the patient's bill, closes out the queue
+ * entry, and — this is required, not optional — decides what happens to
+ * the patient next: recover in a ward, or go straight to the cashier if
+ * no admission is needed. Without this the patient had no way forward
+ * after surgery.
  */
 router.post("/bookings/:id/complete", requireAuth, requireRole("DOCTOR", "NURSE"), async (req: AuthedRequest, res) => {
+  const parsed = completeSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Choose whether this patient goes to a ward or straight to the cashier" });
+  const { decision, notes } = parsed.data;
+
   const booking = await prisma.booking.findUnique({
     where: { id: req.params.id },
     include: { charges: true, equipment: true },
@@ -136,6 +148,9 @@ router.post("/bookings/:id/complete", requireAuth, requireRole("DOCTOR", "NURSE"
       return res.status(403).json({ error: "Only the staff member who claimed this case can complete it" });
     }
 
+    const nextDept: Department = decision === "WARD" ? "WARD" : "CASHIER";
+    const nextStatus = decision === "WARD" ? "AWAITING_ADMISSION" : "CASHIER";
+
     await prisma.$transaction(async (tx) => {
       for (const charge of booking.charges) {
         await tx.billingItem.create({
@@ -147,15 +162,22 @@ router.post("/bookings/:id/complete", requireAuth, requireRole("DOCTOR", "NURSE"
           },
         });
       }
+      if (notes) {
+        await tx.encounterNote.create({
+          data: { encounterId: booking.encounterId as string, department: "Theatre", authorId: req.user!.id, note: notes },
+        });
+      }
       await tx.queueEntry.update({ where: { id: queueEntry.id }, data: { status: "COMPLETED", completedAt: new Date() } });
       await tx.booking.update({ where: { id: booking.id }, data: { status: "Completed" } });
+      await tx.encounter.update({ where: { id: booking.encounterId as string }, data: { status: nextStatus as any } });
+      await enqueue(tx, booking.encounterId as string, nextDept);
     });
   } else {
     await prisma.booking.update({ where: { id: booking.id }, data: { status: "Completed" } });
   }
 
-  await logAction({ userId: req.user!.id, action: "theatre.completed", entityType: "Booking", entityId: booking.id });
-  res.json({ ok: true });
+  await logAction({ userId: req.user!.id, action: "theatre.completed", entityType: "Booking", entityId: booking.id, details: { decision } });
+  res.json({ ok: true, decision });
 });
 
 router.post("/bookings/:id/cancel", requireAuth, requireRole("DOCTOR", "NURSE", "WARD_NURSE"), async (req: AuthedRequest, res) => {

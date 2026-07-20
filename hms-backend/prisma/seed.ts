@@ -81,13 +81,13 @@ async function main() {
 
   // 5. A couple of wards with beds, since inpatient care is in scope.
   const wards = [
-    { name: "General Ward", type: "General", bedCount: 10 },
-    { name: "Maternity Ward", type: "Maternity", bedCount: 6 },
+    { name: "General Ward", type: "General", bedCount: 10, dailyRate: 1500 },
+    { name: "Maternity Ward", type: "Maternity", bedCount: 6, dailyRate: 2500 },
   ];
   for (const w of wards) {
     const existing = await prisma.ward.findFirst({ where: { name: w.name } });
     if (!existing) {
-      const ward = await prisma.ward.create({ data: { name: w.name, type: w.type } });
+      const ward = await prisma.ward.create({ data: { name: w.name, type: w.type, dailyRate: w.dailyRate } });
       for (let i = 1; i <= w.bedCount; i++) {
         await prisma.bed.create({ data: { wardId: ward.id, bedNumber: String(i).padStart(2, "0") } });
       }

@@ -31,8 +31,10 @@ router.get("/:department", requireAuth, async (req: AuthedRequest, res) => {
             patient: true,
             triage: true,
             labOrders: true,
+            consultations: true,
             prescriptions: { include: { item: true } },
             billingItems: true,
+            notes: { orderBy: { createdAt: "asc" } },
           },
         },
       },
@@ -46,8 +48,10 @@ router.get("/:department", requireAuth, async (req: AuthedRequest, res) => {
             patient: true,
             triage: true,
             labOrders: true,
+            consultations: true,
             prescriptions: { include: { item: true } },
             billingItems: true,
+            notes: { orderBy: { createdAt: "asc" } },
           },
         },
       },
@@ -83,7 +87,7 @@ router.post("/:id/claim", requireAuth, async (req: AuthedRequest, res) => {
     where: { id },
     include: {
       encounter: {
-        include: { patient: true, triage: true, labOrders: true, prescriptions: { include: { item: true } }, billingItems: true },
+        include: { patient: true, triage: true, labOrders: true, consultations: true, prescriptions: { include: { item: true } }, billingItems: true, notes: { orderBy: { createdAt: "asc" } } },
       },
     },
   });

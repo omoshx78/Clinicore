@@ -11,6 +11,7 @@ const DEPARTMENTS = [
   { key: "LABORATORY", label: "Laboratory", to: "/laboratory" },
   { key: "PHARMACY", label: "Pharmacy", to: "/pharmacy" },
   { key: "CASHIER", label: "Cashier", to: "/cashier" },
+  { key: "WARD", label: "Ward referrals", to: "/wards" },
 ];
 
 export default function Dashboard() {
@@ -56,7 +57,7 @@ export default function Dashboard() {
     <div>
       <SectionHeader title="Dashboard" subtitle="Live overview of patient flow, stock, and bookings" />
 
-      <div className="grid grid-cols-5 gap-3 mb-6">
+      <div className="grid grid-cols-6 gap-3 mb-6">
         {DEPARTMENTS.map((d) => (
           <Link key={d.key} to={d.to}>
             <Card className="!p-4 hover:border-teal-400 transition">

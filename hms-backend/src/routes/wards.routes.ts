@@ -36,6 +36,22 @@ router.post("/admissions", requireAuth, requireRole("DOCTOR", "WARD_NURSE"), asy
   const encounter = await prisma.encounter.findUnique({ where: { id: d.encounterId } });
   if (!encounter) return res.status(404).json({ error: "Encounter not found" });
 
+  // If this patient was referred here from a doctor's consultation review,
+  // there's a WARD queue entry waiting — it must be claimed by whoever is
+  // admitting (or an admin) before the admission can proceed. Direct,
+  // unreferred admissions (no queue entry at all) are still allowed.
+  const referral = await prisma.queueEntry.findFirst({
+    where: { encounterId: d.encounterId, department: "WARD", status: { in: ["WAITING", "CLAIMED"] } },
+  });
+  if (referral) {
+    if (referral.status === "WAITING") {
+      return res.status(403).json({ error: "Claim this referral from the Wards queue before admitting" });
+    }
+    if (referral.claimedById !== req.user!.id && req.user!.role !== "ADMIN") {
+      return res.status(403).json({ error: "Only the staff member who claimed this referral can admit the patient" });
+    }
+  }
+
   const admission = await prisma.$transaction(async (tx) => {
     const a = await tx.admission.create({
       data: {
@@ -48,6 +64,9 @@ router.post("/admissions", requireAuth, requireRole("DOCTOR", "WARD_NURSE"), asy
     });
     await tx.bed.update({ where: { id: d.bedId }, data: { status: "OCCUPIED" } });
     await tx.encounter.update({ where: { id: d.encounterId }, data: { status: "ADMITTED", type: "INPATIENT" } });
+    if (referral) {
+      await tx.queueEntry.update({ where: { id: referral.id }, data: { status: "COMPLETED", completedAt: new Date() } });
+    }
     return a;
   });
 
@@ -73,24 +92,49 @@ router.post("/admissions/:id/notes", requireAuth, requireRole("DOCTOR", "WARD_NU
 
 /**
  * POST /admissions/:id/discharge
- * Frees the bed and sends the patient to the Cashier queue for final
- * billing — actual encounter discharge happens once payment is recorded,
- * same as the outpatient flow.
+ * Charges for the length of stay (ward's daily rate × nights stayed,
+ * minimum 1 day), frees the bed, and sends the patient to the Cashier
+ * queue for final billing — actual encounter discharge happens once
+ * payment is recorded, same as the outpatient flow.
  */
 router.post("/admissions/:id/discharge", requireAuth, requireRole("DOCTOR", "WARD_NURSE"), async (req: AuthedRequest, res) => {
-  const admission = await prisma.admission.findUnique({ where: { id: req.params.id } });
+  const admission = await prisma.admission.findUnique({
+    where: { id: req.params.id },
+    include: { bed: { include: { ward: true } } },
+  });
   if (!admission) return res.status(404).json({ error: "Admission not found" });
   if (admission.dischargedAt) return res.status(400).json({ error: "This admission is already discharged" });
 
+  const dischargedAt = new Date();
+  const msPerDay = 1000 * 60 * 60 * 24;
+  const nights = Math.max(1, Math.ceil((dischargedAt.getTime() - admission.admittedAt.getTime()) / msPerDay));
+  const wardCharge = Number(admission.bed.ward.dailyRate) * nights;
+
   await prisma.$transaction(async (tx) => {
-    await tx.admission.update({ where: { id: admission.id }, data: { dischargedAt: new Date() } });
+    await tx.admission.update({ where: { id: admission.id }, data: { dischargedAt } });
     await tx.bed.update({ where: { id: admission.bedId }, data: { status: "AVAILABLE" } });
+    if (wardCharge > 0) {
+      await tx.billingItem.create({
+        data: {
+          encounterId: admission.encounterId,
+          description: `Ward: ${admission.bed.ward.name} — ${nights} night(s) @ ${admission.bed.ward.dailyRate}`,
+          amount: wardCharge,
+          category: "Ward/Admission",
+        },
+      });
+    }
     await tx.encounter.update({ where: { id: admission.encounterId }, data: { status: "CASHIER" } });
     await enqueue(tx, admission.encounterId, "CASHIER");
   });
 
-  await logAction({ userId: req.user!.id, action: "ward.discharged_to_billing", entityType: "Admission", entityId: admission.id });
-  res.json({ ok: true });
+  await logAction({
+    userId: req.user!.id,
+    action: "ward.discharged_to_billing",
+    entityType: "Admission",
+    entityId: admission.id,
+    details: { nights, wardCharge },
+  });
+  res.json({ ok: true, nights, wardCharge });
 });
 
 export default router;

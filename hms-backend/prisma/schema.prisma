@@ -42,6 +42,8 @@ enum EncounterStatus {
   LABORATORY
   PHARMACY
   CASHIER
+  AWAITING_ADMISSION
+  AWAITING_THEATRE
   ADMITTED
   DISCHARGED
   CANCELLED
@@ -155,6 +157,7 @@ model Encounter {
   queueEntries   QueueEntry[]
   admission      Admission?
   bookings       Booking[]
+  notes          EncounterNote[]
 
   @@index([status])
   @@index([patientId])
@@ -353,10 +356,11 @@ model Expense {
 // ---------------- Inpatient / wards ----------------
 
 model Ward {
-  id   String @id @default(cuid())
-  name String
-  type String? // e.g. "General", "Maternity", "ICU", "Pediatric"
-  beds Bed[]
+  id        String  @id @default(cuid())
+  name      String
+  type      String? // e.g. "General", "Maternity", "ICU", "Pediatric"
+  dailyRate Decimal @default(0) @db.Decimal(10, 2) // charged per day of stay, in KES
+  beds      Bed[]
 }
 
 model Bed {
@@ -393,6 +397,18 @@ model NursingNote {
   note         String
   recordedById String?
   recordedAt   DateTime  @default(now())
+}
+
+model EncounterNote {
+  id          String    @id @default(cuid())
+  encounter   Encounter @relation(fields: [encounterId], references: [id])
+  encounterId String
+  department  String    // e.g. "Triage", "Consultation", "Laboratory", "Pharmacy", "Cashier", "Theatre", "Ward"
+  authorId    String?
+  note        String
+  createdAt   DateTime  @default(now())
+
+  @@index([encounterId])
 }
 
 // ---------------- Audit ----------------

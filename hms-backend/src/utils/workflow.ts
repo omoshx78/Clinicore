@@ -30,7 +30,9 @@ export function nextAfterConsultation(hasLabOrders: boolean, hasPrescriptions: b
   return "CASHIER";
 }
 
-/** Decide where a patient goes after lab results are entered. */
-export function nextAfterLab(hasPrescriptions: boolean): Department {
-  return hasPrescriptions ? "PHARMACY" : "CASHIER";
+/** After lab results are entered, the patient always goes back to the
+ * doctor to review results — the doctor then decides pharmacy, ward, or
+ * discharge via the consultation-review step. */
+export function nextAfterLab(): Department {
+  return "CONSULTATION";
 }

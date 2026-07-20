@@ -3,6 +3,7 @@ import { QueueBoard } from "../components/QueueBoard";
 import { api, ApiError } from "../api/client";
 import { QueueEntry } from "../types";
 import { Badge, ErrorBanner } from "../components/ui";
+import { NoteBox } from "../components/NoteBox";
 
 function PharmacyPanel({ entry, onDone }: { entry: QueueEntry; onDone: () => void }) {
   const p = entry.encounter.patient!;
@@ -53,6 +54,7 @@ function PharmacyPanel({ entry, onDone }: { entry: QueueEntry; onDone: () => voi
       >
         {submitting ? "Dispensing..." : "Dispense & send to cashier"}
       </button>
+      <NoteBox encounterId={entry.encounterId} existingNotes={entry.encounter.notes} />
     </div>
   );
 }

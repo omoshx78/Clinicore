@@ -13,6 +13,7 @@ export interface Patient {
   lastName: string;
   gender: string;
   phone?: string;
+  nationalId?: string;
   insuranceProvider?: string;
   insuranceNo?: string;
   encounters?: Encounter[];
@@ -51,6 +52,22 @@ export interface BillingItem {
   category?: string;
 }
 
+export interface ConsultationRecord {
+  id: string;
+  doctorId?: string;
+  diagnosis?: string;
+  notes?: string;
+  createdAt: string;
+}
+
+export interface EncounterNote {
+  id: string;
+  department: string;
+  authorId?: string;
+  note: string;
+  createdAt: string;
+}
+
 export interface Encounter {
   id: string;
   patientId: string;
@@ -58,10 +75,12 @@ export interface Encounter {
   chiefComplaint?: string;
   patient?: Patient;
   triage?: TriageRecord;
+  consultations?: ConsultationRecord[];
   labOrders?: LabOrder[];
   prescriptions?: Prescription[];
   billingItems?: BillingItem[];
   payment?: any;
+  notes?: EncounterNote[];
 }
 
 export interface QueueEntry {

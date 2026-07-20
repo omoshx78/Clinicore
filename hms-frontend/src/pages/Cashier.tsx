@@ -36,6 +36,13 @@ function CashierForm({ entry, onDone }: { entry: QueueEntry; onDone: () => void 
     <form onSubmit={submit}>
       <p className="font-medium mb-3">{p.firstName} {p.lastName} <span className="text-slate-400 font-normal text-sm">({p.mrn})</span></p>
       <ErrorBanner message={error} />
+      {(entry.encounter.notes || []).length > 0 && (
+        <div className="mb-3 space-y-1">
+          {entry.encounter.notes!.map((n) => (
+            <p key={n.id} className="text-xs bg-slate-50 rounded-lg px-2.5 py-1.5"><span className="font-medium text-slate-600">{n.department}:</span> {n.note}</p>
+          ))}
+        </div>
+      )}
       <table className="w-full text-sm mb-3">
         <tbody>
           {items.map((it) => (

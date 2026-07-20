@@ -1,8 +1,9 @@
 import { useState, useEffect, FormEvent } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Inbox } from "lucide-react";
 import { api, ApiError } from "../api/client";
 import { Card, SectionHeader, Badge, ErrorBanner, money } from "../components/ui";
 import { Patient } from "../types";
+import { PatientPicker } from "../components/PatientPicker";
 
 interface Equipment { id: string; name: string; type: string; feeItems: { label: string; defaultAmount: string }[]; }
 interface FeeItem { label: string; amount: number; }
@@ -10,12 +11,11 @@ interface FeeItem { label: string; amount: number; }
 export default function Theatre() {
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [bookings, setBookings] = useState<any[]>([]);
+  const [referrals, setReferrals] = useState<any[]>([]);
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [error, setError] = useState<string | null>(null);
 
   const [equipmentId, setEquipmentId] = useState("");
-  const [patientSearch, setPatientSearch] = useState("");
-  const [patientResults, setPatientResults] = useState<Patient[]>([]);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [encounterId, setEncounterId] = useState("");
   const [time, setTime] = useState("09:00");
@@ -42,8 +42,25 @@ export default function Theatre() {
     }
   };
 
-  useEffect(() => { loadEquipment(); }, []);
+  const loadReferrals = async () => {
+    try {
+      const [queue, allBookings] = await Promise.all([api.get("/queue/THEATRE"), api.get("/theatre/bookings")]);
+      const scheduledEncounterIds = new Set(
+        allBookings.filter((b: any) => b.status !== "Cancelled" && b.encounterId).map((b: any) => b.encounterId)
+      );
+      setReferrals(queue.waiting.filter((r: any) => !scheduledEncounterIds.has(r.encounterId)));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not load theatre referrals");
+    }
+  };
+
+  useEffect(() => { loadEquipment(); loadReferrals(); }, []);
   useEffect(() => { loadBookings(); }, [date]);
+
+  const scheduleReferral = (r: any) => {
+    setSelectedPatient(r.encounter.patient);
+    setEncounterId(r.encounterId);
+  };
 
   const changeEquipment = (id: string) => {
     setEquipmentId(id);
@@ -51,15 +68,8 @@ export default function Theatre() {
     setItems(eq ? eq.feeItems.map((fi) => ({ label: fi.label, amount: Number(fi.defaultAmount) })) : []);
   };
 
-  const searchPatients = async () => {
-    if (!patientSearch) return;
-    const results = await api.get(`/patients?search=${encodeURIComponent(patientSearch)}`);
-    setPatientResults(results);
-  };
-
   const pickPatient = async (p: Patient) => {
     setSelectedPatient(p);
-    setPatientResults([]);
     const full = await api.get(`/patients/${p.id}`);
     const active = (full.encounters || []).find((e: any) => e.status !== "DISCHARGED");
     setEncounterId(active ? active.id : "");
@@ -85,6 +95,7 @@ export default function Theatre() {
       setSelectedPatient(null);
       setEncounterId("");
       await loadBookings();
+      await loadReferrals();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not create booking");
     } finally {
@@ -100,9 +111,11 @@ export default function Theatre() {
       setError(err instanceof ApiError ? err.message : "Could not claim this case");
     }
   };
-  const complete = async (id: string) => {
+  const [completingId, setCompletingId] = useState<string | null>(null);
+  const confirmComplete = async (id: string, decision: "WARD" | "CASHIER") => {
     try {
-      await api.post(`/theatre/bookings/${id}/complete`);
+      await api.post(`/theatre/bookings/${id}/complete`, { decision });
+      setCompletingId(null);
       await loadBookings();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not complete this case");
@@ -111,12 +124,28 @@ export default function Theatre() {
   const cancel = async (id: string) => {
     await api.post(`/theatre/bookings/${id}/cancel`);
     await loadBookings();
+    await loadReferrals();
   };
 
   return (
     <div>
       <SectionHeader title="Theatre & equipment" subtitle="Book operating theatres, imaging machines and diagnostic equipment" />
       <ErrorBanner message={error} />
+
+      {referrals.length > 0 && (
+        <Card className="mb-5">
+          <p className="font-medium text-sm mb-3 flex items-center gap-1.5"><Inbox size={15} /> Referrals awaiting scheduling ({referrals.length})</p>
+          <ul className="space-y-1.5">
+            {referrals.map((r: any) => (
+              <li key={r.id} className="flex items-center justify-between border border-slate-200 rounded-lg px-3 py-1.5 text-sm">
+                <span>{r.encounter.patient.firstName} {r.encounter.patient.lastName} ({r.encounter.patient.mrn})</span>
+                <button onClick={() => scheduleReferral(r)} className="text-xs bg-teal-800 text-white rounded px-2 py-1 hover:bg-teal-900">Schedule →</button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
       <div className="grid grid-cols-3 gap-5 mb-5">
         <Card>
           <p className="font-medium text-sm mb-3">New booking</p>
@@ -135,21 +164,7 @@ export default function Theatre() {
               </div>
             ) : (
               <div>
-                <div className="flex gap-1.5">
-                  <input value={patientSearch} onChange={(e) => setPatientSearch(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), searchPatients())} placeholder="Search patient..." className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm" />
-                  <button type="button" onClick={searchPatients} className="text-xs bg-slate-800 text-white rounded-lg px-3 hover:bg-slate-900">Search</button>
-                </div>
-                {patientResults.length > 0 && (
-                  <ul className="mt-1.5 space-y-1 max-h-32 overflow-auto">
-                    {patientResults.map((p) => (
-                      <li key={p.id}>
-                        <button type="button" onClick={() => pickPatient(p)} className="w-full text-left text-xs px-2 py-1.5 border border-slate-200 rounded hover:bg-slate-50">
-                          {p.firstName} {p.lastName} ({p.mrn})
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <PatientPicker onSelect={pickPatient} />
               </div>
             )}
             {selectedPatient && !encounterId && (
@@ -203,10 +218,20 @@ export default function Theatre() {
                     <Badge className="bg-slate-100 text-slate-700 border-slate-300">{b.status}</Badge>
                   </div>
                   {b.encounterId && b.status !== "Completed" && b.status !== "Cancelled" && (
-                    <div className="flex gap-3 mt-2">
+                    <div className="mt-2">
                       {b.status === "Scheduled" && <button onClick={() => claim(b.id)} className="text-xs bg-teal-800 text-white rounded-lg py-1 px-3 hover:bg-teal-900">Claim & start</button>}
-                      {b.status === "In progress" && <button onClick={() => complete(b.id)} className="text-xs bg-emerald-700 text-white rounded-lg py-1 px-3 hover:bg-emerald-800">Complete & bill</button>}
-                      <button onClick={() => cancel(b.id)} className="text-xs text-slate-400 hover:text-rose-600">Cancel</button>
+                      {b.status === "In progress" && completingId !== b.id && (
+                        <button onClick={() => setCompletingId(b.id)} className="text-xs bg-emerald-700 text-white rounded-lg py-1 px-3 hover:bg-emerald-800">Complete & bill</button>
+                      )}
+                      {b.status === "In progress" && completingId === b.id && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500">Send patient to:</span>
+                          <button onClick={() => confirmComplete(b.id, "WARD")} className="text-xs bg-indigo-700 text-white rounded-lg py-1 px-2.5 hover:bg-indigo-800">Ward (recovery)</button>
+                          <button onClick={() => confirmComplete(b.id, "CASHIER")} className="text-xs bg-orange-700 text-white rounded-lg py-1 px-2.5 hover:bg-orange-800">Cashier (discharge)</button>
+                          <button onClick={() => setCompletingId(null)} className="text-xs text-slate-400 hover:text-rose-600">Back</button>
+                        </div>
+                      )}
+                      {b.status !== "In progress" && <button onClick={() => cancel(b.id)} className="text-xs text-slate-400 hover:text-rose-600 ml-3">Cancel</button>}
                     </div>
                   )}
                 </li>
