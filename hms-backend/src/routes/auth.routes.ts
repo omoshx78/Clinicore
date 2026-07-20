@@ -39,7 +39,7 @@ const createUserSchema = z.object({
   name: z.string().min(1),
   email: z.string().email(),
   password: z.string().min(8, "Password must be at least 8 characters"),
-  role: z.enum(["ADMIN", "RECEPTIONIST", "NURSE", "DOCTOR", "LAB_TECH", "PHARMACIST", "CASHIER", "WARD_NURSE"]),
+  role: z.enum(["ADMIN", "RECEPTIONIST", "NURSE", "DOCTOR", "LAB_TECH", "PHARMACIST", "CASHIER", "WARD_NURSE", "THEATRE_NURSE"]),
 });
 
 // Only an existing admin can create staff accounts — run the seed script
@@ -73,7 +73,7 @@ router.get("/users", requireAuth, requireRole("ADMIN"), async (_req, res) => {
 
 const updateUserSchema = z.object({
   name: z.string().min(1).optional(),
-  role: z.enum(["ADMIN", "RECEPTIONIST", "NURSE", "DOCTOR", "LAB_TECH", "PHARMACIST", "CASHIER", "WARD_NURSE"]).optional(),
+  role: z.enum(["ADMIN", "RECEPTIONIST", "NURSE", "DOCTOR", "LAB_TECH", "PHARMACIST", "CASHIER", "WARD_NURSE", "THEATRE_NURSE"]).optional(),
   active: z.boolean().optional(),
 });
 
@@ -88,6 +88,21 @@ router.patch("/users/:id", requireAuth, requireRole("ADMIN"), async (req: Authed
   }
   if (parsed.data.role && parsed.data.role !== "ADMIN" && req.params.id === req.user!.id) {
     return res.status(400).json({ error: "You can't change your own role away from admin" });
+  }
+
+  // Never allow the last active admin to be demoted or deactivated —
+  // that's exactly the lockout scenario that's already happened once.
+  const isRemovingAdminRights = (parsed.data.role && parsed.data.role !== "ADMIN") || parsed.data.active === false;
+  if (isRemovingAdminRights) {
+    const target = await prisma.user.findUnique({ where: { id: req.params.id } });
+    if (target?.role === "ADMIN" && target.active) {
+      const otherActiveAdmins = await prisma.user.count({
+        where: { role: "ADMIN", active: true, id: { not: req.params.id } },
+      });
+      if (otherActiveAdmins === 0) {
+        return res.status(400).json({ error: "This is the last active admin account — create another admin before changing this one" });
+      }
+    }
   }
 
   const user = await prisma.user.update({

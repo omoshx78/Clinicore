@@ -13,39 +13,20 @@ import catalogRoutes from "./routes/catalog.routes";
 
 const app = express();
 
-// Parse allowed origins cleanly
-const allowedOrigins = process.env.CORS_ORIGIN
+const corsOrigin = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(",").map((o) => o.trim().replace(/\/+$/, ""))
-  : ["*"];
+  : "*";
 
-console.log("CORS allowed origins:", allowedOrigins);
+console.log("CORS allowed origins:", corsOrigin);
 
-const corsOptions: cors.CorsOptions = {
-  origin: (origin, callback) => {
-    // Allow requests with no origin (like server-to-server or curl)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    } else {
-      return callback(new Error("Not allowed by CORS"));
-    }
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  optionsSuccessStatus: 200 // Ensures preflight OPTIONS requests return a successful 200 status code
-};
+const corsOptions: cors.CorsOptions = { origin: corsOrigin };
 
-// Apply CORS preflight handler and middleware at the very top
-app.options("*", cors(corsOptions));
 app.use(cors(corsOptions));
+app.options("*", cors(corsOptions)); // explicit preflight handling
 app.use(express.json());
 
-// Health check endpoint
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// Application Routes
 app.use("/auth", authRoutes);
 app.use("/patients", patientRoutes);
 app.use("/encounters", encounterRoutes);
@@ -56,9 +37,8 @@ app.use("/wards", wardRoutes);
 app.use("/reports", reportRoutes);
 app.use("/catalog", catalogRoutes);
 
-// Global Error Handler
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error("Server Error:", err);
+  console.error(err);
   res.status(500).json({ error: "Something went wrong on the server" });
 });
 

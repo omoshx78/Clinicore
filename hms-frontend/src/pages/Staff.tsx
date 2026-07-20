@@ -13,12 +13,12 @@ interface StaffUser {
   createdAt: string;
 }
 
-const ROLES: Role[] = ["ADMIN", "RECEPTIONIST", "NURSE", "DOCTOR", "LAB_TECH", "PHARMACIST", "CASHIER", "WARD_NURSE"];
+const STAFF_ROLES: Role[] = ["RECEPTIONIST", "NURSE", "DOCTOR", "LAB_TECH", "PHARMACIST", "CASHIER", "WARD_NURSE", "THEATRE_NURSE"];
 // New staff accounts can never be created as Admin from this form — admin
 // rights should only ever be granted deliberately, by promoting an
 // existing account via the role dropdown below (which requires a
 // confirmation and can't be used on your own account).
-const CREATE_ROLES: Role[] = ["RECEPTIONIST", "NURSE", "DOCTOR", "LAB_TECH", "PHARMACIST", "CASHIER", "WARD_NURSE"];
+const CREATE_ROLES: Role[] = STAFF_ROLES;
 
 export default function Staff() {
   const [users, setUsers] = useState<StaffUser[]>([]);
@@ -150,7 +150,12 @@ export default function Staff() {
                 <td className="text-slate-500">{u.email}</td>
                 <td>
                   <select value={u.role} onChange={(e) => changeRole(u.id, e.target.value as Role, u.name)} className="text-xs border border-slate-300 rounded px-2 py-1">
-                    {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                    <optgroup label="Staff roles">
+                      {STAFF_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                    </optgroup>
+                    <optgroup label="⚠ Admin">
+                      <option value="ADMIN">ADMIN</option>
+                    </optgroup>
                   </select>
                 </td>
                 <td>

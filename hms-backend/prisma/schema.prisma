@@ -21,6 +21,7 @@ enum Role {
   PHARMACIST
   CASHIER
   WARD_NURSE
+  THEATRE_NURSE
 }
 
 enum Gender {
@@ -155,7 +156,7 @@ model Encounter {
   billingItems   BillingItem[]
   payment        Payment?
   queueEntries   QueueEntry[]
-  admission      Admission?
+  admissions     Admission[]
   bookings       Booking[]
   notes          EncounterNote[]
 
@@ -378,7 +379,7 @@ model Bed {
 model Admission {
   id                 String    @id @default(cuid())
   encounter          Encounter @relation(fields: [encounterId], references: [id])
-  encounterId        String    @unique
+  encounterId        String
   bed                Bed       @relation(fields: [bedId], references: [id])
   bedId              String
   admittedAt         DateTime  @default(now())
@@ -388,6 +389,8 @@ model Admission {
   admittingDiagnosis String?
 
   nursingNotes NursingNote[]
+
+  @@index([encounterId])
 }
 
 model NursingNote {

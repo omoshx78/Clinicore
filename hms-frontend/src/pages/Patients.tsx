@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { Search, Users, Clock } from "lucide-react";
+import { Search, Users, Clock, Ban } from "lucide-react";
 import { api, ApiError } from "../api/client";
 import { Card, SectionHeader, Badge, ErrorBanner, money } from "../components/ui";
 import { Patient } from "../types";
+import { useAuth } from "../auth/AuthContext";
 
 const STATUS_COLORS: Record<string, string> = {
   REGISTERED: "bg-slate-100 text-slate-700 border-slate-300",
@@ -15,9 +16,11 @@ const STATUS_COLORS: Record<string, string> = {
   AWAITING_THEATRE: "bg-fuchsia-100 text-fuchsia-800 border-fuchsia-300",
   ADMITTED: "bg-indigo-100 text-indigo-800 border-indigo-300",
   DISCHARGED: "bg-emerald-100 text-emerald-800 border-emerald-300",
+  CANCELLED: "bg-slate-200 text-slate-500 border-slate-300",
 };
 
 export default function Patients() {
+  const { user } = useAuth();
   const [search, setSearch] = useState("");
   const [results, setResults] = useState<Patient[]>([]);
   const [selected, setSelected] = useState<Patient | null>(null);
@@ -46,6 +49,17 @@ export default function Patients() {
       setSelected(await api.get(`/patients/${p.id}`));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load patient");
+    }
+  };
+
+  const cancelVisit = async (encounterId: string) => {
+    if (!window.confirm("Cancel this visit? This closes it out (frees any bed, cancels queue entries) without deleting the record. Use this only for visits that are stuck with no valid next step.")) return;
+    setError(null);
+    try {
+      await api.post(`/encounters/${encounterId}/cancel`);
+      if (selected) setSelected(await api.get(`/patients/${selected.id}`));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not cancel this visit");
     }
   };
 
@@ -100,7 +114,14 @@ export default function Patients() {
                   <div key={enc.id} className="border border-slate-200 rounded-lg p-3">
                     <div className="flex justify-between items-center mb-2">
                       <p className="text-sm font-medium">{enc.type} visit — {new Date(enc.registeredAt).toLocaleDateString()}</p>
-                      <Badge className={STATUS_COLORS[enc.status] || "bg-slate-100 text-slate-700 border-slate-300"}>{enc.status}</Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge className={STATUS_COLORS[enc.status] || "bg-slate-100 text-slate-700 border-slate-300"}>{enc.status}</Badge>
+                        {user?.role === "ADMIN" && enc.status !== "DISCHARGED" && enc.status !== "CANCELLED" && (
+                          <button onClick={() => cancelVisit(enc.id)} className="text-xs text-rose-600 hover:underline inline-flex items-center gap-0.5">
+                            <Ban size={11} /> Cancel visit
+                          </button>
+                        )}
+                      </div>
                     </div>
                     {enc.chiefComplaint && <p className="text-xs text-slate-500 mb-1">Complaint: {enc.chiefComplaint}</p>}
                     {enc.triage?.notes && <p className="text-xs text-slate-500 mb-1"><span className="font-medium">Triage:</span> {enc.triage.notes}</p>}

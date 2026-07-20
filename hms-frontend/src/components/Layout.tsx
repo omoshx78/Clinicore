@@ -23,7 +23,7 @@ const NAV: NavItem[] = [
   { to: "/pharmacy", label: "Pharmacy", icon: Pill, roles: ["PHARMACIST", "ADMIN"] },
   { to: "/cashier", label: "Cashier", icon: Wallet, roles: ["CASHIER", "ADMIN"] },
   { to: "/reports", label: "Reports", icon: BarChart3, roles: ["CASHIER", "ADMIN"] },
-  { to: "/theatre", label: "Theatre & equipment", icon: CalendarClock, roles: ["DOCTOR", "NURSE", "WARD_NURSE", "ADMIN"] },
+  { to: "/theatre", label: "Theatre & equipment", icon: CalendarClock, roles: ["DOCTOR", "NURSE", "WARD_NURSE", "THEATRE_NURSE", "ADMIN"] },
   { to: "/wards", label: "Wards", icon: BedDouble, roles: ["DOCTOR", "NURSE", "WARD_NURSE", "ADMIN"] },
   { to: "/inventory", label: "Inventory", icon: Boxes, roles: ["PHARMACIST", "ADMIN"] },
   { to: "/staff", label: "Staff", icon: ShieldCheck, roles: ["ADMIN"] },

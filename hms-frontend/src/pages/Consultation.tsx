@@ -23,9 +23,13 @@ function ConsultationForm({ entry, onDone }: { entry: QueueEntry; onDone: () => 
 
   useEffect(() => {
     (async () => {
-      const [catalog, inventory] = await Promise.all([api.get("/catalog"), api.get("/inventory?category=Medicine")]);
-      setLabTests(catalog.labTests);
-      setMedicines(inventory);
+      try {
+        const [catalog, inventory] = await Promise.all([api.get("/catalog"), api.get("/inventory?category=Medicine")]);
+        setLabTests(catalog.labTests);
+        setMedicines(inventory);
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : "Could not load lab tests / medicines — try reloading the page");
+      }
     })();
   }, []);
 
@@ -82,13 +86,19 @@ function ConsultationForm({ entry, onDone }: { entry: QueueEntry; onDone: () => 
       </label>
 
       <p className="text-sm font-medium mt-4 mb-2">Order lab tests</p>
-      <div className="grid grid-cols-2 gap-1.5">
-        {labTests.map((t) => (
-          <label key={t.id} className="text-xs flex items-center gap-2 border border-slate-200 rounded-lg px-2.5 py-1.5">
-            <input type="checkbox" checked={selectedLabIds.includes(t.id)} onChange={() => toggleLab(t.id)} />
-            {t.name} <span className="text-slate-400">({money(t.price)})</span>
-          </label>
-        ))}
+      <div className="border border-slate-200 rounded-lg p-2.5">
+        {labTests.length === 0 ? (
+          <p className="text-xs text-slate-400 px-1 py-1">Loading lab test list...</p>
+        ) : (
+          <div className="grid grid-cols-2 gap-1.5">
+            {labTests.map((t) => (
+              <label key={t.id} className="text-xs flex items-center gap-2 border border-slate-200 rounded-lg px-2.5 py-1.5 cursor-pointer hover:bg-slate-50">
+                <input type="checkbox" checked={selectedLabIds.includes(t.id)} onChange={() => toggleLab(t.id)} />
+                {t.name} <span className="text-slate-400">({money(t.price)})</span>
+              </label>
+            ))}
+          </div>
+        )}
       </div>
 
       <p className="text-sm font-medium mt-4 mb-2">Prescribe medicines</p>
@@ -103,7 +113,6 @@ function ConsultationForm({ entry, onDone }: { entry: QueueEntry; onDone: () => 
               <span className="flex-1">{r.name}</span>
               <input
                 type="number"
-                min={1}
                 value={r.qty}
                 onChange={(e) => setPrescriptions((rx) => rx.map((x) => (x.itemId === r.itemId ? { ...x, qty: Math.max(1, Number(e.target.value)) } : x)))}
                 className="w-16 border border-slate-300 rounded px-2 py-1 text-xs"
@@ -237,7 +246,7 @@ function ReviewForm({ entry, onDone }: { entry: QueueEntry; onDone: () => void }
               {prescriptions.map((r) => (
                 <li key={r.itemId} className="flex items-center gap-2 text-sm bg-slate-50 rounded-lg px-3 py-1.5">
                   <span className="flex-1">{r.name}</span>
-                  <input type="number" min={1} value={r.qty} onChange={(e) => setPrescriptions((rx) => rx.map((x) => (x.itemId === r.itemId ? { ...x, qty: Math.max(1, Number(e.target.value)) } : x)))} className="w-16 border border-slate-300 rounded px-2 py-1 text-xs" />
+                  <input type="number" value={r.qty} onChange={(e) => setPrescriptions((rx) => rx.map((x) => (x.itemId === r.itemId ? { ...x, qty: Math.max(1, Number(e.target.value)) } : x)))} className="w-16 border border-slate-300 rounded px-2 py-1 text-xs" />
                   <button type="button" onClick={() => setPrescriptions((rx) => rx.filter((x) => x.itemId !== r.itemId))}><Trash2 size={14} className="text-slate-400 hover:text-rose-600" /></button>
                 </li>
               ))}

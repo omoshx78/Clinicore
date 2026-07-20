@@ -33,7 +33,7 @@ const bookingSchema = z.object({
  * If an encounterId is given, this booking also enters the shared THEATRE
  * queue so surgeons/anaesthetists can claim it when ready to start.
  */
-router.post("/bookings", requireAuth, requireRole("DOCTOR", "NURSE", "WARD_NURSE"), async (req: AuthedRequest, res) => {
+router.post("/bookings", requireAuth, requireRole("DOCTOR", "NURSE", "WARD_NURSE", "THEATRE_NURSE"), async (req: AuthedRequest, res) => {
   const parsed = bookingSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
   const d = parsed.data;
@@ -92,7 +92,7 @@ router.get("/bookings", requireAuth, async (req, res) => {
  * THEATRE queue entry (atomically, same guard as every other department)
  * and flips the booking to "In progress".
  */
-router.post("/bookings/:id/claim", requireAuth, requireRole("DOCTOR", "NURSE"), async (req: AuthedRequest, res) => {
+router.post("/bookings/:id/claim", requireAuth, requireRole("DOCTOR", "NURSE", "THEATRE_NURSE"), async (req: AuthedRequest, res) => {
   const booking = await prisma.booking.findUnique({ where: { id: req.params.id } });
   if (!booking) return res.status(404).json({ error: "Booking not found" });
   if (!booking.encounterId) return res.status(400).json({ error: "This booking has no linked patient, so it isn't in the queue" });
@@ -128,7 +128,7 @@ const completeSchema = z.object({
  * no admission is needed. Without this the patient had no way forward
  * after surgery.
  */
-router.post("/bookings/:id/complete", requireAuth, requireRole("DOCTOR", "NURSE"), async (req: AuthedRequest, res) => {
+router.post("/bookings/:id/complete", requireAuth, requireRole("DOCTOR", "NURSE", "THEATRE_NURSE"), async (req: AuthedRequest, res) => {
   const parsed = completeSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Choose whether this patient goes to a ward or straight to the cashier" });
   const { decision, notes } = parsed.data;
@@ -180,7 +180,7 @@ router.post("/bookings/:id/complete", requireAuth, requireRole("DOCTOR", "NURSE"
   res.json({ ok: true, decision });
 });
 
-router.post("/bookings/:id/cancel", requireAuth, requireRole("DOCTOR", "NURSE", "WARD_NURSE"), async (req: AuthedRequest, res) => {
+router.post("/bookings/:id/cancel", requireAuth, requireRole("DOCTOR", "NURSE", "WARD_NURSE", "THEATRE_NURSE"), async (req: AuthedRequest, res) => {
   const booking = await prisma.booking.findUnique({ where: { id: req.params.id } });
   if (!booking) return res.status(404).json({ error: "Booking not found" });
 

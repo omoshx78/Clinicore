@@ -111,7 +111,7 @@ export default function App() {
         <Route
           path="/theatre"
           element={
-            <Guard roles={["DOCTOR", "NURSE", "WARD_NURSE"]}>
+            <Guard roles={["DOCTOR", "NURSE", "WARD_NURSE", "THEATRE_NURSE"]}>
               <Theatre />
             </Guard>
           }

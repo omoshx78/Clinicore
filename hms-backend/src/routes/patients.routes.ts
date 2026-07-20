@@ -146,7 +146,7 @@ router.get("/:id", requireAuth, async (req, res) => {
           prescriptions: { include: { item: true } },
           billingItems: true,
           payment: true,
-          admission: { include: { bed: { include: { ward: true } } } },
+          admissions: { include: { bed: { include: { ward: true } } }, orderBy: { admittedAt: "asc" } },
           notes: { orderBy: { createdAt: "asc" } },
         },
       },

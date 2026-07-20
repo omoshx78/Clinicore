@@ -33,6 +33,7 @@ const ROLE_DEPARTMENT_LABEL: Record<string, string> = {
   PHARMACIST: "Pharmacy",
   CASHIER: "Cashier",
   WARD_NURSE: "Ward",
+  THEATRE_NURSE: "Theatre",
   RECEPTIONIST: "Reception",
   ADMIN: "Admin",
 };
@@ -410,6 +411,47 @@ router.patch("/:id/claim-status", requireAuth, requireRole("CASHIER"), async (re
   });
 
   res.json(updated);
+});
+
+// ---------------- Admin recovery ----------------
+
+/**
+ * POST /encounters/:id/cancel
+ * Admin-only escape hatch for a visit that's gotten stuck (e.g. a bed
+ * mix-up, a workflow change mid-visit, or any other edge case that leaves
+ * a patient with no valid next step). This doesn't delete anything —
+ * healthcare records shouldn't just vanish — it closes out the visit
+ * cleanly: cancels any active queue entries, frees any bed still tied to
+ * an open admission, cancels any pending theatre bookings, and marks the
+ * encounter CANCELLED. The patient can then be registered for a fresh
+ * visit if they still need care.
+ */
+router.post("/:id/cancel", requireAuth, requireRole("ADMIN"), async (req: AuthedRequest, res) => {
+  const encounter = await prisma.encounter.findUnique({ where: { id: req.params.id } });
+  if (!encounter) return res.status(404).json({ error: "Encounter not found" });
+  if (encounter.status === "DISCHARGED" || encounter.status === "CANCELLED") {
+    return res.status(400).json({ error: `This visit is already ${encounter.status.toLowerCase()}` });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.queueEntry.updateMany({
+      where: { encounterId: encounter.id, status: { in: ["WAITING", "CLAIMED"] } },
+      data: { status: "CANCELLED" },
+    });
+    const openAdmissions = await tx.admission.findMany({ where: { encounterId: encounter.id, dischargedAt: null } });
+    for (const a of openAdmissions) {
+      await tx.admission.update({ where: { id: a.id }, data: { dischargedAt: new Date() } });
+      await tx.bed.update({ where: { id: a.bedId }, data: { status: "AVAILABLE" } });
+    }
+    await tx.booking.updateMany({
+      where: { encounterId: encounter.id, status: { in: ["Scheduled", "In progress"] } },
+      data: { status: "Cancelled" },
+    });
+    await tx.encounter.update({ where: { id: encounter.id }, data: { status: "CANCELLED" } });
+  });
+
+  await logAction({ userId: req.user!.id, action: "encounter.force_cancelled", entityType: "Encounter", entityId: encounter.id });
+  res.json({ ok: true });
 });
 
 export default router;
