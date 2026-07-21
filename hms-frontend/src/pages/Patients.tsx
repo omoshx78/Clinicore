@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { Search, Users, Clock, Ban } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Search, Users, Clock, Ban, Printer } from "lucide-react";
 import { api, ApiError } from "../api/client";
 import { Card, SectionHeader, Badge, ErrorBanner, money } from "../components/ui";
 import { Patient } from "../types";
@@ -163,6 +164,26 @@ export default function Patients() {
                         )}
                       </div>
                     )}
+                    <div className="flex flex-wrap gap-3 mt-3 pt-2 border-t border-slate-100">
+                      <Link to={`/print/${enc.id}?type=summary`} target="_blank" className="text-xs text-teal-700 hover:underline inline-flex items-center gap-1">
+                        <Printer size={12} /> Medical report
+                      </Link>
+                      {enc.billingItems?.length > 0 && (
+                        <Link to={`/print/${enc.id}?type=receipt`} target="_blank" className="text-xs text-teal-700 hover:underline inline-flex items-center gap-1">
+                          <Printer size={12} /> Payment receipt
+                        </Link>
+                      )}
+                      {(enc.status === "DISCHARGED" || (enc.admissions || []).length > 0) && (
+                        <Link to={`/print/${enc.id}?type=discharge`} target="_blank" className="text-xs text-teal-700 hover:underline inline-flex items-center gap-1">
+                          <Printer size={12} /> Discharge summary
+                        </Link>
+                      )}
+                      {(enc.bookings || []).length > 0 && (
+                        <Link to={`/print/${enc.id}?type=theatre`} target="_blank" className="text-xs text-teal-700 hover:underline inline-flex items-center gap-1">
+                          <Printer size={12} /> Theatre record
+                        </Link>
+                      )}
+                    </div>
                   </div>
                 ))}
                 {(!selected.encounters || selected.encounters.length === 0) && (

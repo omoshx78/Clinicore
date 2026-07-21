@@ -13,7 +13,9 @@ interface LabTest { id: string; name: string; price: number; }
 function ConsultationForm({ entry, onDone }: { entry: QueueEntry; onDone: () => void }) {
   const p = entry.encounter.patient!;
   const [labTests, setLabTests] = useState<LabTest[]>([]);
+  const [labTestsError, setLabTestsError] = useState<string | null>(null);
   const [medicines, setMedicines] = useState<InventoryItem[]>([]);
+  const [medicinesError, setMedicinesError] = useState<string | null>(null);
   const [diagnosis, setDiagnosis] = useState("");
   const [notes, setNotes] = useState("");
   const [selectedLabIds, setSelectedLabIds] = useState<string[]>([]);
@@ -21,16 +23,22 @@ function ConsultationForm({ entry, onDone }: { entry: QueueEntry; onDone: () => 
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const loadLabTests = () => {
+    setLabTestsError(null);
+    api.get("/catalog")
+      .then((catalog) => setLabTests(catalog.labTests))
+      .catch((err) => setLabTestsError(err instanceof ApiError ? err.message : "Could not load lab tests"));
+  };
+  const loadMedicines = () => {
+    setMedicinesError(null);
+    api.get("/inventory?category=Medicine")
+      .then((inventory) => setMedicines(inventory))
+      .catch((err) => setMedicinesError(err instanceof ApiError ? err.message : "Could not load medicines"));
+  };
+
   useEffect(() => {
-    (async () => {
-      try {
-        const [catalog, inventory] = await Promise.all([api.get("/catalog"), api.get("/inventory?category=Medicine")]);
-        setLabTests(catalog.labTests);
-        setMedicines(inventory);
-      } catch (err) {
-        setError(err instanceof ApiError ? err.message : "Could not load lab tests / medicines — try reloading the page");
-      }
-    })();
+    loadLabTests();
+    loadMedicines();
   }, []);
 
   const toggleLab = (id: string) => {
@@ -87,7 +95,12 @@ function ConsultationForm({ entry, onDone }: { entry: QueueEntry; onDone: () => 
 
       <p className="text-sm font-medium mt-4 mb-2">Order lab tests</p>
       <div className="border border-slate-200 rounded-lg p-2.5">
-        {labTests.length === 0 ? (
+        {labTestsError ? (
+          <div className="flex items-center justify-between px-1 py-1">
+            <p className="text-xs text-rose-600">{labTestsError}</p>
+            <button type="button" onClick={loadLabTests} className="text-xs text-teal-700 hover:underline">Retry</button>
+          </div>
+        ) : labTests.length === 0 ? (
           <p className="text-xs text-slate-400 px-1 py-1">Loading lab test list...</p>
         ) : (
           <div className="grid grid-cols-2 gap-1.5">
@@ -102,10 +115,17 @@ function ConsultationForm({ entry, onDone }: { entry: QueueEntry; onDone: () => 
       </div>
 
       <p className="text-sm font-medium mt-4 mb-2">Prescribe medicines</p>
-      <select onChange={(e) => { addRx(e.target.value); e.target.value = ""; }} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-2" defaultValue="">
-        <option value="" disabled>Add medicine...</option>
-        {medicines.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.quantity} {m.unit} in stock)</option>)}
-      </select>
+      {medicinesError ? (
+        <div className="flex items-center justify-between border border-rose-200 bg-rose-50 rounded-lg px-3 py-2 mb-2">
+          <p className="text-xs text-rose-600">{medicinesError}</p>
+          <button type="button" onClick={loadMedicines} className="text-xs text-teal-700 hover:underline">Retry</button>
+        </div>
+      ) : (
+        <select onChange={(e) => { addRx(e.target.value); e.target.value = ""; }} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-2" defaultValue="">
+          <option value="" disabled>{medicines.length === 0 ? "Loading medicines..." : "Add medicine..."}</option>
+          {medicines.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.quantity} {m.unit} in stock)</option>)}
+        </select>
+      )}
       {prescriptions.length > 0 && (
         <ul className="space-y-1.5 mb-2">
           {prescriptions.map((r) => (
@@ -155,15 +175,21 @@ function ReviewForm({ entry, onDone }: { entry: QueueEntry; onDone: () => void }
   const completedLabs = (entry.encounter.labOrders || []).filter((o) => o.status === "COMPLETED");
   const priorConsultation = (entry.encounter.consultations || [])[0];
   const [medicines, setMedicines] = useState<InventoryItem[]>([]);
+  const [medicinesError, setMedicinesError] = useState<string | null>(null);
   const [decision, setDecision] = useState<"PHARMACY" | "WARD" | "THEATRE" | "DISCHARGE" | null>(null);
   const [notes, setNotes] = useState("");
   const [prescriptions, setPrescriptions] = useState<{ itemId: string; name: string; qty: number }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    (async () => setMedicines(await api.get("/inventory?category=Medicine")))();
-  }, []);
+  const loadMedicines = () => {
+    setMedicinesError(null);
+    api.get("/inventory?category=Medicine")
+      .then(setMedicines)
+      .catch((err) => setMedicinesError(err instanceof ApiError ? err.message : "Could not load medicines"));
+  };
+
+  useEffect(() => { loadMedicines(); }, []);
 
   const addRx = (itemId: string) => {
     if (!itemId || prescriptions.find((r) => r.itemId === itemId)) return;
@@ -237,10 +263,17 @@ function ReviewForm({ entry, onDone }: { entry: QueueEntry; onDone: () => void }
       {decision === "PHARMACY" && (
         <div className="mb-4">
           <p className="text-sm font-medium mb-2">Prescribe medicines</p>
-          <select onChange={(e) => { addRx(e.target.value); e.target.value = ""; }} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-2" defaultValue="">
-            <option value="" disabled>Add medicine...</option>
-            {medicines.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.quantity} {m.unit} in stock)</option>)}
-          </select>
+          {medicinesError ? (
+            <div className="flex items-center justify-between border border-rose-200 bg-rose-50 rounded-lg px-3 py-2 mb-2">
+              <p className="text-xs text-rose-600">{medicinesError}</p>
+              <button type="button" onClick={loadMedicines} className="text-xs text-teal-700 hover:underline">Retry</button>
+            </div>
+          ) : (
+            <select onChange={(e) => { addRx(e.target.value); e.target.value = ""; }} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-2" defaultValue="">
+              <option value="" disabled>{medicines.length === 0 ? "Loading medicines..." : "Add medicine..."}</option>
+              {medicines.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.quantity} {m.unit} in stock)</option>)}
+            </select>
+          )}
           {prescriptions.length > 0 && (
             <ul className="space-y-1.5">
               {prescriptions.map((r) => (

@@ -23,6 +23,32 @@ async function requireClaimedEntry(encounterId: string, department: Department, 
   return entry;
 }
 
+/**
+ * GET /encounters/:id
+ * Full detail for a single visit — everything needed to render any
+ * printable document (medical report, discharge summary, receipt,
+ * theatre record) in one call.
+ */
+router.get("/:id", requireAuth, async (req, res) => {
+  const encounter = await prisma.encounter.findUnique({
+    where: { id: req.params.id },
+    include: {
+      patient: true,
+      triage: true,
+      consultations: { orderBy: { createdAt: "asc" } },
+      labOrders: true,
+      prescriptions: { include: { item: true } },
+      billingItems: true,
+      payment: true,
+      notes: { orderBy: { createdAt: "asc" } },
+      admissions: { include: { bed: { include: { ward: true } } }, orderBy: { admittedAt: "asc" } },
+      bookings: { include: { equipment: true, charges: true } },
+    },
+  });
+  if (!encounter) return res.status(404).json({ error: "Visit not found" });
+  res.json(encounter);
+});
+
 // Maps a staff member's role to a human-readable department label, used to
 // tag notes so a doctor reading the patient's record can see at a glance
 // who left each note.

@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import "express-async-errors";
 import cors from "cors";
 import authRoutes from "./routes/auth.routes";
 import patientRoutes from "./routes/patients.routes";
@@ -39,7 +40,21 @@ app.use("/catalog", catalogRoutes);
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
-  res.status(500).json({ error: "Something went wrong on the server" });
+
+  // Prisma "known request errors" carry a code we can translate into
+  // something a staff member can actually act on, instead of a generic
+  // 500 that leaves them stuck.
+  if (err?.code === "P2002") {
+    return res.status(409).json({ error: "This conflicts with an existing record (duplicate entry). Refresh and try again." });
+  }
+  if (err?.code === "P2025") {
+    return res.status(404).json({ error: "The record being updated no longer exists — it may have been changed by someone else. Refresh and try again." });
+  }
+  if (err?.code === "P2003") {
+    return res.status(400).json({ error: "This action refers to a record that no longer exists. Refresh and try again." });
+  }
+
+  res.status(500).json({ error: "Something went wrong on the server. If this keeps happening, check the server logs." });
 });
 
 const port = Number(process.env.PORT) || 4000;

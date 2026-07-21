@@ -19,6 +19,7 @@ import Wards from "./pages/Wards";
 import Inventory from "./pages/Inventory";
 import Staff from "./pages/Staff";
 import ChangePassword from "./pages/ChangePassword";
+import PrintView from "./pages/PrintView";
 
 function Guard({ roles, children }: { roles?: Role[]; children: ReactNode }) {
   const { user, loading } = useAuth();
@@ -42,6 +43,14 @@ export default function App() {
       <Route
         path="/login"
         element={loading ? <div className="p-8 text-sm text-slate-400">Loading...</div> : user ? <Navigate to="/" replace /> : <Login />}
+      />
+      <Route
+        path="/print/:encounterId"
+        element={
+          <Guard>
+            <PrintView />
+          </Guard>
+        }
       />
       <Route
         element={
