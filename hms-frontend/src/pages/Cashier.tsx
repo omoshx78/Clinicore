@@ -1,8 +1,11 @@
 import { useState, FormEvent } from "react";
+import { Link } from "react-router-dom";
+import { Receipt, Printer } from "lucide-react";
 import { QueueBoard } from "../components/QueueBoard";
 import { api, ApiError } from "../api/client";
-import { QueueEntry } from "../types";
-import { ErrorBanner, money } from "../components/ui";
+import { QueueEntry, Patient } from "../types";
+import { Card, Badge, ErrorBanner, money } from "../components/ui";
+import { PatientPicker } from "../components/PatientPicker";
 
 function CashierForm({ entry, onDone }: { entry: QueueEntry; onDone: () => void }) {
   const p = entry.encounter.patient!;
@@ -75,13 +78,88 @@ function CashierForm({ entry, onDone }: { entry: QueueEntry; onDone: () => void 
   );
 }
 
+// ---------------- Look up any patient's payment history / receipts ----------------
+
+const STATUS_BADGE: Record<string, string> = {
+  DISCHARGED: "bg-emerald-100 text-emerald-800 border-emerald-300",
+  CASHIER: "bg-orange-100 text-orange-800 border-orange-300",
+};
+
+function PaymentLookup() {
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [detail, setDetail] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const pick = async (p: Patient) => {
+    setSelectedPatient(p);
+    setError(null);
+    try {
+      setDetail(await api.get(`/patients/${p.id}`));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not load this patient's records");
+    }
+  };
+
+  const billedEncounters = (detail?.encounters || []).filter((e: any) => (e.billingItems || []).length > 0);
+
+  return (
+    <Card className="mt-5">
+      <p className="font-medium text-sm mb-3 flex items-center gap-1.5"><Receipt size={15} /> Look up a patient's payment / receipt</p>
+      <ErrorBanner message={error} />
+      {!selectedPatient ? (
+        <PatientPicker onSelect={pick} placeholder="Search by name, MRN, phone, or ID number..." />
+      ) : (
+        <div>
+          <div className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2 mb-3">
+            <span className="text-sm">{selectedPatient.firstName} {selectedPatient.lastName} ({selectedPatient.mrn})</span>
+            <button onClick={() => { setSelectedPatient(null); setDetail(null); }} className="text-xs text-slate-400 hover:text-rose-600">Change</button>
+          </div>
+          {!detail ? (
+            <p className="text-sm text-slate-400">Loading...</p>
+          ) : billedEncounters.length === 0 ? (
+            <p className="text-sm text-slate-400">No billed visits found for this patient.</p>
+          ) : (
+            <ul className="space-y-2">
+              {billedEncounters.map((enc: any) => {
+                const total = enc.billingItems.reduce((s: number, i: any) => s + Number(i.amount), 0);
+                return (
+                  <li key={enc.id} className="border border-slate-200 rounded-lg px-3 py-2 text-sm">
+                    <div className="flex justify-between items-center">
+                      <span>{new Date(enc.registeredAt).toLocaleDateString()} — {enc.type}</span>
+                      <Badge className={STATUS_BADGE[enc.status] || "bg-slate-100 text-slate-700 border-slate-300"}>{enc.status}</Badge>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Total {money(total)} —{" "}
+                      {enc.payment
+                        ? enc.payment.method === "CASH"
+                          ? `Paid in cash${enc.payment.paidAt ? ` on ${new Date(enc.payment.paidAt).toLocaleDateString()}` : ""}`
+                          : `Insurance (${enc.payment.insuranceProvider || "—"}) — claim #${enc.payment.claimNo || "—"} — ${enc.payment.claimStatus}`
+                        : "Not yet paid"}
+                    </p>
+                    <Link to={`/print/${enc.id}?type=receipt`} target="_blank" className="text-xs text-teal-700 hover:underline inline-flex items-center gap-1 mt-1.5">
+                      <Printer size={12} /> View / print receipt
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export default function Cashier() {
   return (
-    <QueueBoard
-      department="CASHIER"
-      title="Cashier"
-      subtitle="Generate invoice and capture payment"
-      renderAction={(entry, onDone) => <CashierForm entry={entry} onDone={onDone} />}
-    />
+    <div>
+      <QueueBoard
+        department="CASHIER"
+        title="Cashier"
+        subtitle="Generate invoice and capture payment"
+        renderAction={(entry, onDone) => <CashierForm entry={entry} onDone={onDone} />}
+      />
+      <PaymentLookup />
+    </div>
   );
 }
