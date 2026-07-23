@@ -10,12 +10,6 @@ import { logAction } from "../utils/audit";
 
 const router = Router();
 
-/**
- * Confirms the caller currently holds the CLAIMED queue entry for this
- * encounter/department before letting them act on it. This is what stops
- * a doctor from submitting a consultation for a patient someone else has
- * claimed (or nobody has claimed yet).
- */
 async function requireClaimedEntry(encounterId: string, department: Department, userId: string) {
   const entry = await prisma.queueEntry.findFirst({
     where: { encounterId, department, status: "CLAIMED", claimedById: userId },
@@ -23,12 +17,6 @@ async function requireClaimedEntry(encounterId: string, department: Department, 
   return entry;
 }
 
-/**
- * GET /encounters/:id
- * Full detail for a single visit — everything needed to render any
- * printable document (medical report, discharge summary, receipt,
- * theatre record) in one call.
- */
 router.get("/:id", requireAuth, async (req, res) => {
   const encounter = await prisma.encounter.findUnique({
     where: { id: req.params.id },
@@ -49,9 +37,6 @@ router.get("/:id", requireAuth, async (req, res) => {
   res.json(encounter);
 });
 
-// Maps a staff member's role to a human-readable department label, used to
-// tag notes so a doctor reading the patient's record can see at a glance
-// who left each note.
 const ROLE_DEPARTMENT_LABEL: Record<string, string> = {
   NURSE: "Triage",
   DOCTOR: "Consultation",
@@ -66,14 +51,6 @@ const ROLE_DEPARTMENT_LABEL: Record<string, string> = {
 
 const noteSchema = z.object({ note: z.string().min(1) });
 
-/**
- * POST /encounters/:id/notes
- * A note any staff member can leave on a patient's visit — tagged with
- * their department automatically. These show up on the patient's
- * permanent profile (visible to any doctor) and, for triage/consultation
- * notes specifically, are also surfaced directly in the consultation
- * screens for continuity of care.
- */
 router.post("/:id/notes", requireAuth, async (req: AuthedRequest, res) => {
   const parsed = noteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Note text is required" });
@@ -120,7 +97,6 @@ router.post("/:id/triage", requireAuth, requireRole("NURSE"), async (req: Authed
     });
     await tx.encounter.update({ where: { id: encounterId }, data: { status: "CONSULTATION" } });
     await tx.queueEntry.update({ where: { id: entry.id }, data: { status: "COMPLETED", completedAt: new Date() } });
-    // Urgent/emergency triage priority carries forward so doctors see the sickest patients first.
     await enqueue(tx, encounterId, "CONSULTATION", parsed.data.priority);
     return triage;
   });
@@ -134,11 +110,8 @@ router.post("/:id/triage", requireAuth, requireRole("NURSE"), async (req: Authed
 const consultationSchema = z.object({
   diagnosis: z.string().optional(),
   notes: z.string().optional(),
-  labTestIds: z.array(z.string()).default([]), // keys from LAB_TEST_CATALOG
+  labTestIds: z.array(z.string()).default([]),
   prescriptions: z.array(z.object({ itemId: z.string(), quantity: z.number().int().min(1) })).default([]),
-  // Optional direct routing — used when the doctor doesn't need lab/pharmacy
-  // first and wants to send the patient straight to theatre or discharge
-  // them on this first visit. When set, labTestIds/prescriptions are ignored.
   decision: z.enum(["THEATRE", "DISCHARGE"]).optional(),
 });
 
@@ -222,8 +195,6 @@ router.post("/:id/lab-results", requireAuth, requireRole("LAB_TECH"), async (req
       });
     }
 
-    // Always back to the doctor — results need a clinician's eyes before
-    // anything else happens (pharmacy, ward, or discharge).
     const nextDept = nextAfterLab();
     await tx.encounter.update({ where: { id: encounterId }, data: { status: nextDept as any } });
     await tx.queueEntry.update({ where: { id: entry.id }, data: { status: "COMPLETED", completedAt: new Date() } });
@@ -242,13 +213,6 @@ const reviewSchema = z.object({
   prescriptions: z.array(z.object({ itemId: z.string(), quantity: z.number().int().min(1) })).default([]),
 });
 
-/**
- * A doctor reviewing lab/equipment results has four outcomes: send to
- * pharmacy for medication, refer to a ward for admission, refer to
- * theatre for a procedure, or dismiss the patient (no further treatment)
- * straight to the cashier — in every case, whatever was already charged
- * (consultation + lab fees) still stands.
- */
 router.post("/:id/consultation-review", requireAuth, requireRole("DOCTOR"), async (req: AuthedRequest, res) => {
   const encounterId = req.params.id;
   const parsed = reviewSchema.safeParse(req.body);
@@ -418,66 +382,4 @@ router.patch("/:id/claim-status", requireAuth, requireRole("CASHIER"), async (re
   if (!parsed.success) return res.status(400).json({ error: "Invalid status" });
 
   const payment = await prisma.payment.findUnique({ where: { encounterId: req.params.id } });
-  if (!payment) return res.status(404).json({ error: "No payment/claim found for this encounter" });
-
-  const updated = await prisma.payment.update({
-    where: { encounterId: req.params.id },
-    data: {
-      claimStatus: parsed.data.status,
-      paidAt: parsed.data.status === "PAID" ? new Date() : null,
-    },
-  });
-
-  await logAction({
-    userId: req.user!.id,
-    action: "claim.status_updated",
-    entityType: "Payment",
-    entityId: payment.id,
-    details: { status: parsed.data.status },
-  });
-
-  res.json(updated);
-});
-
-// ---------------- Admin recovery ----------------
-
-/**
- * POST /encounters/:id/cancel
- * Admin-only escape hatch for a visit that's gotten stuck (e.g. a bed
- * mix-up, a workflow change mid-visit, or any other edge case that leaves
- * a patient with no valid next step). This doesn't delete anything —
- * healthcare records shouldn't just vanish — it closes out the visit
- * cleanly: cancels any active queue entries, frees any bed still tied to
- * an open admission, cancels any pending theatre bookings, and marks the
- * encounter CANCELLED. The patient can then be registered for a fresh
- * visit if they still need care.
- */
-router.post("/:id/cancel", requireAuth, requireRole("ADMIN"), async (req: AuthedRequest, res) => {
-  const encounter = await prisma.encounter.findUnique({ where: { id: req.params.id } });
-  if (!encounter) return res.status(404).json({ error: "Encounter not found" });
-  if (encounter.status === "DISCHARGED" || encounter.status === "CANCELLED") {
-    return res.status(400).json({ error: `This visit is already ${encounter.status.toLowerCase()}` });
-  }
-
-  await prisma.$transaction(async (tx) => {
-    await tx.queueEntry.updateMany({
-      where: { encounterId: encounter.id, status: { in: ["WAITING", "CLAIMED"] } },
-      data: { status: "CANCELLED" },
-    });
-    const openAdmissions = await tx.admission.findMany({ where: { encounterId: encounter.id, dischargedAt: null } });
-    for (const a of openAdmissions) {
-      await tx.admission.update({ where: { id: a.id }, data: { dischargedAt: new Date() } });
-      await tx.bed.update({ where: { id: a.bedId }, data: { status: "AVAILABLE" } });
-    }
-    await tx.booking.updateMany({
-      where: { encounterId: encounter.id, status: { in: ["Scheduled", "In progress"] } },
-      data: { status: "Cancelled" },
-    });
-    await tx.encounter.update({ where: { id: encounter.id }, data: { status: "CANCELLED" } });
-  });
-
-  await logAction({ userId: req.user!.id, action: "encounter.force_cancelled", entityType: "Encounter", entityId: encounter.id });
-  res.json({ ok: true });
-});
-
-export default router;
+  if (!payment) return
