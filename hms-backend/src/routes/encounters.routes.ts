@@ -382,4 +382,55 @@ router.patch("/:id/claim-status", requireAuth, requireRole("CASHIER"), async (re
   if (!parsed.success) return res.status(400).json({ error: "Invalid status" });
 
   const payment = await prisma.payment.findUnique({ where: { encounterId: req.params.id } });
-  if (!payment) return
+  if (!payment) return res.status(404).json({ error: "No payment/claim found for this encounter" });
+
+  const updated = await prisma.payment.update({
+    where: { encounterId: req.params.id },
+    data: {
+      claimStatus: parsed.data.status,
+      paidAt: parsed.data.status === "PAID" ? new Date() : null,
+    },
+  });
+
+  await logAction({
+    userId: req.user!.id,
+    action: "claim.status_updated",
+    entityType: "Payment",
+    entityId: payment.id,
+    details: { status: parsed.data.status },
+  });
+
+  res.json(updated);
+});
+
+// ---------------- Admin recovery ----------------
+
+router.post("/:id/cancel", requireAuth, requireRole("ADMIN"), async (req: AuthedRequest, res) => {
+  const encounter = await prisma.encounter.findUnique({ where: { id: req.params.id } });
+  if (!encounter) return res.status(404).json({ error: "Encounter not found" });
+  if (encounter.status === "DISCHARGED" || encounter.status === "CANCELLED") {
+    return res.status(400).json({ error: `This visit is already ${encounter.status.toLowerCase()}` });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.queueEntry.updateMany({
+      where: { encounterId: encounter.id, status: { in: ["WAITING", "CLAIMED"] } },
+      data: { status: "CANCELLED" },
+    });
+    const openAdmissions = await tx.admission.findMany({ where: { encounterId: encounter.id, dischargedAt: null } });
+    for (const a of openAdmissions) {
+      await tx.admission.update({ where: { id: a.id }, data: { dischargedAt: new Date() } });
+      await tx.bed.update({ where: { id: a.bedId }, data: { status: "AVAILABLE" } });
+    }
+    await tx.booking.updateMany({
+      where: { encounterId: encounter.id, status: { in: ["Scheduled", "In progress"] } },
+      data: { status: "Cancelled" },
+    });
+    await tx.encounter.update({ where: { id: encounter.id }, data: { status: "CANCELLED" } });
+  });
+
+  await logAction({ userId: req.user!.id, action: "encounter.force_cancelled", entityType: "Encounter", entityId: encounter.id });
+  res.json({ ok: true });
+});
+
+export default router;
